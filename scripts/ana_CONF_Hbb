@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+
+import math
+
+# a few kernals used for transformation
+
+def k_nbtags(trkjet_idx, btagging):
+    return [sum(btagging[idx] for idx in trks[:2]) for trks in trkjet_idx]
+
+
+def k_trackjet_VR(trks):
+    return np.array([max([0.02, min([0.4, 30/pt])]) for pt in trks], dtype=np.float32)
+
+
+def f_trkjet_R(pt):
+    return max([0.02, min([0.4, 30/pt])])
+
+
+def delta_phi(phi1, phi2):
+    dphi = phi2 - phi1
+    if dphi > np.pi:
+        dphi -= 2*np.pi
+    if dphi < -np.pi:
+        dphi += 2*np.pi
+    return dphi
+
+
+def k_fatjet_VR_overlap(trkjet_idx, trkjet_pt, trkjet_eta, trkjet_phi):
+    results = []
+    for trks in trkjet_idx:
+        result = False
+        for i in range(len(trks[:2])):
+            if trkjet_pt[trks[i]] < 10 or result:
+                break
+            r0 = f_trkjet_R(trkjet_pt[trks[i]])
+            for j in range(i+1, len(trks)):
+                r1 = f_trkjet_R(trkjet_pt[trks[j]])
+                minR = min(r0, r1)
+                eta1 = trkjet_eta[trks[i]]
+                phi1 = trkjet_phi[trks[i]]
+                eta2 = trkjet_eta[trks[j]]
+                phi2 = trkjet_phi[trks[j]]
+
+                dr = math.sqrt((eta1 - eta2)**2 + delta_phi(phi1, phi2)**2)
+                if dr/minR < 1:
+                    result = True
+                    break
+        results.append(result)
+    return results
+
+
+def k_fatjetlist_idx(trkfatjet_ntj, overlap, boost):
+    if len(trkfatjet_ntj) < 1:
+        return -1
+    result = [idx for idx in range(len(trkfatjet_ntj)) if trkfatjet_ntj[idx] >= 2 and not overlap[idx] and boost[idx]<1]
+    if len(result) > 0:
+        return result[0]
+    else:
+        return -1
+
+if __name__ == "__main__":
+    import ROOT
+    ROOT.gROOT.SetBatch()
+    import numpy as np
+    from numpy.lib import recfunctions as rfn
+
+    from root_numpy import tree2array, fill_hist
+    import time
+
+    import argparse
+
+    parser = argparse.ArgumentParser(description='training a classifier')
+    add_arg = parser.add_argument
+    add_arg('file_name', type=str, help='input file')
+    add_arg('outname', type=str, help='output file')
+    add_arg('-t', '--tree_name', type=str, help='tree name', default='outTree')
+
+
+    args = parser.parse_args()
+
+    file_name = args.file_name
+    tree_name = args.tree_name
+    outname = args.outname
+
+    chain = ROOT.TChain(tree_name, tree_name)
+    chain.AddFile(file_name)
+
+    print("Processing: {} events".format(chain.GetEntries()))
+    var_trigger1 = 'trigger_HLT_j420_a10_lcw_L1J100'
+    var_trigger2 = 'trigger_HLT_j390_a10t_lcw_jes_30smcINF_L1J100'
+    var_trigger3 = 'trigger_HLT_j360_a10_lcw_sub_L1J100'
+    var_trigger4 = 'trigger_HLT_j420_a10t_lcw_jes_35smcINF_L1J100'
+    var_loose_bad = 'eventClean_LooseBad'
+    var_nfatjet = 'nfatjet'
+    var_trkjet_idx = 'fatjet_trkJetsIdx_GhostVR30Rmax4Rmin02TrackJet'
+    var_btaging = 'fatjet_GhostVR30Rmax4Rmin02TrackJet_is_MV2c10_FixedCutBEff_77'
+    var_trkjet_pt = 'fatjet_GhostVR30Rmax4Rmin02TrackJet_pt'
+    var_trkjet_eta = 'fatjet_GhostVR30Rmax4Rmin02TrackJet_eta'
+    var_trkjet_phi = 'fatjet_GhostVR30Rmax4Rmin02TrackJet_phi'
+    var_fatjet_pt = 'fatjet_pt'
+    var_fatjet_m = 'fatjet_m'
+    branches = [
+            var_trigger1, var_trigger2, var_trigger3, var_trigger4,
+            var_loose_bad, var_nfatjet,
+            var_trkjet_idx, var_trkjet_pt, var_trkjet_eta, var_trkjet_phi,
+            var_btaging,
+            var_fatjet_pt, var_fatjet_m
+    ]
+    t_start = time.time()
+    data = tree2array(chain, branches=branches)
+    t_read_file = time.time() - t_start
+
+    ## trigger and loose_bad and dijet selections
+    trigger1 = data[var_trigger1] == 1
+    trigger2 = data[var_trigger2] == 1
+    trigger3 = data[var_trigger3] == 1
+    trigger4 = data[var_trigger4] == 1
+    loose_bad = data[var_loose_bad] == 1
+    dijet = data[var_nfatjet] >= 2
+
+    mask = (trigger1 | trigger2 | trigger3 | trigger4) & dijet & loose_bad
+    fatjet_ntj = np.array([[len(x) for x in trks] for trks in data[var_trkjet_idx]])
+    fatjet_nbin2 = np.array([k_nbtags(*entry) for entry in data[[var_trkjet_idx, var_btaging]]])
+
+    # overlap removal
+    overlap_inputs = [var_trkjet_idx, var_trkjet_pt, var_trkjet_eta, var_trkjet_phi]
+    fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in data[overlap_inputs]])
+
+    # boost
+    boost_inputs =[var_fatjet_pt, var_fatjet_m]
+    df_fatjet_boost = np.array([2*mass/pt for pt, mass in data[boost_inputs]])
+
+    # signal region
+    region_inputs = [fatjet_ntj, fatjet_VR_overlap, df_fatjet_boost]
+    region = np.array([k_fatjetlist_idx(*entry) for entry in zip(*region_inputs)])
+    final_mask = mask & (region >= 0)
+
+    fout = ROOT.TFile(outname, "recreate")
+    h1 = ROOT.TH1D("h1", "h1", 40, 0, 200)
+
+    signal_data = data[var_fatjet_m][mask & (region >= 0)]
+    Hcand_m = np.array([x[idx] for x,idx in zip(data[var_fatjet_m][final_mask], region[final_mask])])
+    fill_hist(h1, Hcand_m)
+    h1.Write()
+    fout.Close()
