@@ -38,5 +38,8 @@ setup(
     ],
     scripts=[
         'scripts/ana_CONF_Hbb',
+        'scripts/ana_CONF_Hbb_presel',
+        'scripts/ana_CONF_Hbb_numba',
+        'scripts/tree2histo_gpu',
     ],
 )

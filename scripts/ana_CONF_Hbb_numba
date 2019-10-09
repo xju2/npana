@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
 import math
+import numpy as np
+from numba import jit
+from numba.typed import List
+from numba import njit
 
 # a few kernals used for transformation
 
@@ -24,28 +28,39 @@ def delta_phi(phi1, phi2):
         dphi += 2*np.pi
     return dphi
 
-
+@njit
 def k_fatjet_VR_overlap(trkjet_idx, trkjet_pt, trkjet_eta, trkjet_phi):
-    results = []
-    for trks in trkjet_idx:
-        result = False
+    #results = List()
+    results = np.zeros((trkjet_idx.shape[0],), dtype=np.int32)
+    # results = []
+    for itrk,trks in enumerate(trkjet_idx):
+        result = 0
         for i in range(len(trks[:2])):
             if trkjet_pt[trks[i]] < 10 or result:
                 break
-            r0 = f_trkjet_R(trkjet_pt[trks[i]])
+            #r0 = f_trkjet_R(trkjet_pt[trks[i]])
+            r0 = max([0.02, min([0.4, 30/trkjet_pt[trks[i]]])])
             for j in range(i+1, len(trks)):
-                r1 = f_trkjet_R(trkjet_pt[trks[j]])
+                r1 = max([0.02, min([0.4, 30/trkjet_pt[trks[j]]])])
                 minR = min(r0, r1)
                 eta1 = trkjet_eta[trks[i]]
                 phi1 = trkjet_phi[trks[i]]
                 eta2 = trkjet_eta[trks[j]]
                 phi2 = trkjet_phi[trks[j]]
 
-                dr = math.sqrt((eta1 - eta2)**2 + delta_phi(phi1, phi2)**2)
+                # dr = math.sqrt((eta1 - eta2)**2 + delta_phi(phi1, phi2)**2)
+                dphi = phi2 - phi1
+                if dphi > np.pi:
+                    dphi -= 2*np.pi
+                if dphi < -np.pi:
+                    dphi += 2*np.pi
+                dr = math.sqrt((eta1 - eta2)**2 + dphi**2)
                 if dr/minR < 1:
-                    result = True
+                    result = 1
                     break
-        results.append(result)
+        results[itrk] = result
+        #results.append(result)
+        #results.append(result)
     return results
 
 
@@ -61,7 +76,6 @@ def k_fatjetlist_idx(trkfatjet_ntj, overlap, boost):
 if __name__ == "__main__":
     import ROOT
     ROOT.gROOT.SetBatch()
-    import numpy as np
     from numpy.lib import recfunctions as rfn
 
     from root_numpy import tree2array, fill_hist
