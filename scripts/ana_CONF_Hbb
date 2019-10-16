@@ -113,11 +113,11 @@ if __name__ == "__main__":
     t_read_file = time.time()
 
     ## trigger and loose_bad and dijet selections
-    trigger1 = (data[var_trigger1] == 1)
-    trigger2 = (data[var_trigger2] == 1)
-    trigger3 = (data[var_trigger3] == 1)
-    trigger4 = (data[var_trigger4] == 1)
-    loose_bad = (data[var_loose_bad] == 1)
+    trigger1 = data[var_trigger1] == 1
+    trigger2 = data[var_trigger2] == 1
+    trigger3 = data[var_trigger3] == 1
+    trigger4 = data[var_trigger4] == 1
+    loose_bad = data[var_loose_bad] == 1
     dijet = data[var_nfatjet] >= 2
 
     trigger_sel = (trigger1 | trigger2 | trigger3 | trigger4)

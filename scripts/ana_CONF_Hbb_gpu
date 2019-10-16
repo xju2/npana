@@ -62,6 +62,7 @@ if __name__ == "__main__":
     import ROOT
     ROOT.gROOT.SetBatch()
     import numpy as np
+    import cupy as cp
     from numpy.lib import recfunctions as rfn
 
     from root_numpy import tree2array, fill_hist
@@ -85,10 +86,11 @@ if __name__ == "__main__":
     chain = ROOT.TChain(tree_name, tree_name)
     chain.AddFile(file_name)
 
-    print("Processing: {} events".format(chain.GetEntries()))
-    var_trigger1 = 'trigger_HLT_j420_a10_lcw_L1J100'
-    var_trigger2 = 'trigger_HLT_j390_a10t_lcw_jes_30smcINF_L1J100'
-    var_trigger3 = 'trigger_HLT_j360_a10_lcw_sub_L1J100'
+    n_total_evts = chain.GetEntries()
+    print("Processing: {} events".format(n_total_evts))
+    var_trigger1 = 'trigger_HLT_j360_a10_lcw_sub_L1J100'
+    var_trigger2 = 'trigger_HLT_j420_a10_lcw_L1J100'
+    var_trigger3 = 'trigger_HLT_j390_a10t_lcw_jes_30smcINF_L1J100'
     var_trigger4 = 'trigger_HLT_j420_a10t_lcw_jes_35smcINF_L1J100'
     var_loose_bad = 'eventClean_LooseBad'
     var_nfatjet = 'nfatjet'
@@ -110,26 +112,70 @@ if __name__ == "__main__":
     data = tree2array(chain, branches=branches)
     t_read_file = time.time()
 
+    trigger1_gpu = cp.asarray(data[var_trigger1])
+    trigger2_gpu = cp.asarray(data[var_trigger2])
+    trigger3_gpu = cp.asarray(data[var_trigger3])
+    trigger4_gpu = cp.asarray(data[var_trigger4])
+    loose_bad_gpu = cp.asarray(data[var_loose_bad])
+    nfatjet_gpu = cp.asarray(data[var_nfatjet])
+
     ## trigger and loose_bad and dijet selections
-    trigger1 = data[var_trigger1] == 1
-    trigger2 = data[var_trigger2] == 1
-    trigger3 = data[var_trigger3] == 1
-    trigger4 = data[var_trigger4] == 1
-    loose_bad = data[var_loose_bad] == 1
-    dijet = data[var_nfatjet] >= 2
-    mask = (trigger1 | trigger2 | trigger3 | trigger4) & dijet & loose_bad
+    trigger1 = trigger1_gpu == 1
+    trigger2 = trigger2_gpu == 1
+    trigger3 = trigger3_gpu == 1
+    trigger4 = trigger4_gpu == 1
+    loose_bad = loose_bad_gpu == 1
+    dijet = nfatjet_gpu >= 2
+
+    trigger_sel = (trigger1 | trigger2 | trigger3 | trigger4)
+    n_trigger = trigger_sel[trigger_sel==1].shape[0]
+    n_jet_cleaning = trigger_sel[trigger_sel & loose_bad].shape[0]
+
+    mask = trigger_sel & dijet & loose_bad
+    n_di_jet = trigger1[mask].shape[0]
+    t_pre_sel = time.time()
     t_pre_sel = time.time()
 
-    fatjet_ntj = np.array([[len(x) for x in trks] for trks in data[var_trkjet_idx]])
+
+    trkjet_idx_gpu = cp.asarray(data[var_trkjet_idx])
+    fatjet_ntj = cp.array([[len(x) for x in trks] for trks in trkjet_idx_gpu])
     t_ntj = time.time()
 
-    fatjet_nbin2 = np.array([k_nbtags(*entry) for entry in data[[var_trkjet_idx, var_btaging]]])
+    btagging_gpu = cp.asarray(data[var_btaging])
+    fatjet_nbin2 = cp.array([k_nbtags(*entry) for entry in zip(trkjet_idx_gpu, btagging_gpu)])
     t_nbin2= time.time()
+
+    print("Timing Info\n\
+          {:.1f}s in reading files\n\
+          {:.1f}s in pre-selections\n\
+          {:.1f}s in acounting-objects\n\
+          {:.1f}s in number of btagging\n\
+          ".format(
+              t_read_file - t_start,
+              t_pre_sel - t_read_file,
+              t_ntj - t_pre_sel,
+              t_nbin2 - t_ntj,
+          ))
+
+    print("Cut Flow\n\
+          Total:   {:.0f}\n\
+          Trigger: {:.0f}\n\
+          Jet Cleaning: {:.0f}\n\
+          Di Jet: {:.0f}\n\
+          ".format(
+          n_total_evts,
+          n_trigger,
+          n_jet_cleaning,
+          n_di_jet,
+         ))
+
+    exit()
 
     # overlap removal
     overlap_inputs = [var_trkjet_idx, var_trkjet_pt, var_trkjet_eta, var_trkjet_phi]
     fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in data[overlap_inputs]])
     t_ol = time.time()
+
 
     # boost
     boost_inputs =[var_fatjet_pt, var_fatjet_m]
@@ -154,7 +200,8 @@ if __name__ == "__main__":
 
     t_hist = time.time()
 
-    print("{:.1f}s in reading files\n\
+    print("Timing Info\n\
+          {:.1f}s in reading files\n\
           {:.1f}s in pre-selections\n\
           {:.1f}s in acounting-objects\n\
           {:.1f}s in number of btagging\n\

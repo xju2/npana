@@ -40,6 +40,7 @@ setup(
         'scripts/ana_CONF_Hbb',
         'scripts/ana_CONF_Hbb_presel',
         'scripts/ana_CONF_Hbb_numba',
+        'scripts/ana_CONF_Hbb_gpu',
         'scripts/tree2histo_gpu',
     ],
 )
