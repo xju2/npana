@@ -25,7 +25,7 @@ def delta_phi(phi1, phi2):
         dphi += 2*np.pi
     return dphi
 
-@ray.remote
+
 def k_fatjet_VR_overlap(trkjet_idx, trkjet_pt, trkjet_eta, trkjet_phi):
     # print("Hello")
     results = []
@@ -61,13 +61,15 @@ def k_fatjetlist_idx(trkfatjet_ntj, overlap, boost):
         return -1
 
 @ray.remote
-def exe_k_fatjetlist_idx(data):
-    return np.array([k_fatjet_VR_overlap.remote(*entry) for entry in data])
+def exe_k_fatjetlist_idx(data, start, end):
+    return np.array([k_fatjet_VR_overlap(*entry) for entry in data[start:end]])
 
 
 if __name__ == "__main__":
     import ROOT
     ROOT.gROOT.SetBatch()
+
+    import multiprocessing
     import numpy as np
     from numpy.lib import recfunctions as rfn
 
@@ -90,6 +92,7 @@ if __name__ == "__main__":
     outname = args.outname
 
     ## start ray
+    # num_cpus = int(multiprocessing.cpu_count()*0.8)
     num_cpus = 16
     ray.init(num_cpus=num_cpus, ignore_reinit_error=True)
 
@@ -122,7 +125,6 @@ if __name__ == "__main__":
     t_start = time.time()
     data = tree2array(chain, branches=branches)
     t_read_file = time.time()
-    print("{} seconds to read files".format(t_read_file - t_start))
 
 
     ## trigger and loose_bad and dijet selections
@@ -150,24 +152,38 @@ if __name__ == "__main__":
     # overlap removal
     overlap_inputs = [var_trkjet_idx, var_trkjet_pt, var_trkjet_eta, var_trkjet_phi]
 
-    #data_id = ray.put(data[overlap_inputs])
+    ## worst case
     #fatjet_VR_overlap = np.array([k_fatjet_VR_overlap.remote(*entry) for entry in data_id])
 
 
-    # fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in data[overlap_inputs]])
-    data_chunk_id = []
+    ## devide events into chunks, each chunk creating a task
+    ## otherwise, it creats thousands of tasks, which takes a long time
     chunk_size = n_total_evts//num_cpus
-    for icpu in range(num_cpus-1):
-        data_chunk_id.append(ray.put(data[overlap_inputs][icpu*chunk_size:(icpu+1)*chunk_size]))
-    data_chunk_id.append(ray.put(data[overlap_inputs][(num_cpus-2)*chunk_size:]))
+    #data_chunk_id = []
+    #for icpu in range(num_cpus-1):
+    #    data_chunk_id.append(ray.put(data[overlap_inputs][icpu*chunk_size:(icpu+1)*chunk_size]))
 
-    print(" {} chunks".format(len(data_chunk_id)))
+    #data_chunk_id.append(ray.put(data[overlap_inputs][(num_cpus-1)*chunk_size:]))
+
+    #tmp_fatjet_VR_overlap = []
+    #for data_id in data_chunk_id:
+    #    tmp_fatjet_VR_overlap.append(exe_k_fatjetlist_idx.remote(data_id))
+
+    # same performance as previous
     tmp_fatjet_VR_overlap = []
-    for data_id in data_chunk_id:
-        tmp_fatjet_VR_overlap.append(exe_k_fatjetlist_idx.remote(data_id))
+    data_id = ray.put(data[overlap_inputs])
+    for icpu in range(num_cpus-1):
+        start_idx = icpu*chunk_size
+        end_idx = start_idx + chunk_size
+        tmp_fatjet_VR_overlap.append(exe_k_fatjetlist_idx.remote(data_id, start_idx, end_idx))
+
+    start_idx = (num_cpus-1)*chunk_size
+    tmp_fatjet_VR_overlap.append(exe_k_fatjetlist_idx.remote(data_id, start_idx, None))
 
     tmp_fatjet_VR_overlap = ray.get(tmp_fatjet_VR_overlap)
-    fatjet_VR_overlap = np.concatenate(tmp_fatjet_VR_overlap)
+    fatjet_VR_overlap = np.concatenate(tmp_fatjet_VR_overlap, axis=0)
+    #print(fatjet_VR_overlap.shape)
+    #print(fatjet_VR_overlap[0])
 
     t_ol = time.time()
     print("{:.2f} seconds for overlap".format(t_ol - t_nbin2))
