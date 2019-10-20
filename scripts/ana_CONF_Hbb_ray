@@ -61,7 +61,7 @@ def k_fatjetlist_idx(trkfatjet_ntj, overlap, boost):
         return -1
 
 @ray.remote
-def exe_k_fatjetlist_idx(data, start, end):
+def exe_k_overlap(data, start, end):
     return np.array([k_fatjet_VR_overlap(*entry) for entry in data[start:end]])
 
 

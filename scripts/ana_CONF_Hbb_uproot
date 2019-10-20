@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import math
+import uproot
 
 # a few kernals used for transformation
 
@@ -59,12 +60,10 @@ def k_fatjetlist_idx(trkfatjet_ntj, overlap, boost):
         return -1
 
 if __name__ == "__main__":
-    import ROOT
-    ROOT.gROOT.SetBatch()
+
     import numpy as np
     from numpy.lib import recfunctions as rfn
 
-    from root_numpy import tree2array, fill_hist
     import time
 
     import argparse
@@ -82,11 +81,7 @@ if __name__ == "__main__":
     tree_name = args.tree_name
     outname = args.outname
 
-    chain = ROOT.TChain(tree_name, tree_name)
-    chain.AddFile(file_name)
 
-    n_total_evts = chain.GetEntries()
-    print("Processing: {} events".format(n_total_evts))
     var_trigger1 = 'trigger_HLT_j360_a10_lcw_sub_L1J100'
     var_trigger2 = 'trigger_HLT_j420_a10_lcw_L1J100'
     var_trigger3 = 'trigger_HLT_j390_a10t_lcw_jes_30smcINF_L1J100'
@@ -108,11 +103,19 @@ if __name__ == "__main__":
             var_btaging,
             var_fatjet_pt, var_fatjet_m
     ]
-    t_start = time.time()
-    data = tree2array(chain, branches=branches)
-    t_read_file = time.time()
-    print("Takes {:.2f} seconds to read {} events".format(t_read_file-t_start, n_total_evts))
 
+    t_start = time.time()
+    chain = uproot.open(file_name)[tree_name]
+    n_total_evts = chain.numentries
+
+    data = chain.arrays(branches, namedecode='utf-8')
+
+    t_read_file = time.time()
+    print("Takes {:.2f} seconds to read {} events".format(
+        t_read_file-t_start, n_total_evts))
+
+
+    evtCount = data[var_trigger1]
     ## trigger and loose_bad and dijet selections
     trigger1 = data[var_trigger1] == 1
     trigger2 = data[var_trigger2] == 1
@@ -122,27 +125,31 @@ if __name__ == "__main__":
     dijet = data[var_nfatjet] >= 2
 
     trigger_sel = (trigger1 | trigger2 | trigger3 | trigger4)
-    n_trigger = data[trigger_sel].shape[0]
-    n_jet_cleaning = data[trigger_sel & loose_bad].shape[0]
+    n_trigger = evtCount[trigger_sel].shape[0]
+    n_jet_cleaning = evtCount[trigger_sel & loose_bad].shape[0]
 
     mask = trigger_sel & dijet & loose_bad
-    n_di_jet = data[mask].shape[0]
+    n_di_jet = evtCount[mask].shape[0]
     t_pre_sel = time.time()
 
     fatjet_ntj = np.array([[len(x) for x in trks] for trks in data[var_trkjet_idx]])
     t_ntj = time.time()
 
-    fatjet_nbin2 = np.array([k_nbtags(*entry) for entry in data[[var_trkjet_idx, var_btaging]]])
+    #fatjet_nbin2 = np.array([k_nbtags(*entry) for entry in data[[var_trkjet_idx, var_btaging]]])
+    fatjet_nbin2 = np.array([k_nbtags(*entry) for entry in zip(data[var_trkjet_idx], data[var_btaging])])
     t_nbin2= time.time()
 
     # overlap removal
     overlap_inputs = [var_trkjet_idx, var_trkjet_pt, var_trkjet_eta, var_trkjet_phi]
-    fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in data[overlap_inputs]])
+    #fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in data[overlap_inputs]])
+    fatjet_VR_overlap = np.array([k_fatjet_VR_overlap(*entry) for entry in zip(data[var_trkjet_idx], data[var_trkjet_pt], data[var_trkjet_eta], data[var_trkjet_phi])])
+
     t_ol = time.time()
 
     # boost
     boost_inputs =[var_fatjet_pt, var_fatjet_m]
-    df_fatjet_boost = np.array([2*mass/pt for pt, mass in data[boost_inputs]])
+    #df_fatjet_boost = np.array([2*mass/pt for pt, mass in data[boost_inputs]])
+    df_fatjet_boost = 2*data[var_fatjet_m]/data[var_fatjet_pt] ## 10 times fater
     t_boost = time.time()
 
     # signal region
@@ -151,10 +158,8 @@ if __name__ == "__main__":
     t_sr = time.time()
 
     final_mask = mask & (region >= 0)
-    n_region = data[final_mask].shape[0]
+    n_region = evtCount[final_mask].shape[0]
 
-    fout = ROOT.TFile(outname, "recreate")
-    h1 = ROOT.TH1D("h1", "h1", 40, 0, 200)
 
     Hcand_m = np.array([x[idx] for x,idx in zip(data[var_fatjet_m][final_mask], region[final_mask])])
     Hcand_pt = np.array([x[idx] for x,idx in zip(data[var_fatjet_pt][final_mask], region[final_mask])])
@@ -163,10 +168,6 @@ if __name__ == "__main__":
     n_pass_pt = Hcand_pt[Hcand_pt > 440].shape[0]
     n_pass_mass = Hcand_m[(Hcand_pt > 440) & (Hcand_m > 60)].shape[0]
     n_pass_sr = Hcand_m[(Hcand_pt > 440) & (Hcand_m > 60) & (nbjets==2)].shape[0]
-
-    fill_hist(h1, Hcand_m[(Hcand_m > 60) & (Hcand_pt > 440) & (nbjets==2)])
-    h1.Write()
-    fout.Close()
 
     t_hist = time.time()
 
