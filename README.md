@@ -9,10 +9,9 @@ conda install -c conda-forge jupyterlab
 conda install -c conda-forge root
 
 ```
-Load some cuda module in case of using GPU
+Load the cuda module for GPU usage
 ```
 module load cuda/10.1.168
-
 ```
 
 Now start to install the package
